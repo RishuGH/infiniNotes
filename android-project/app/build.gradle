@@ -1,0 +1,112 @@
+plugins {
+    id 'com.android.application'
+}
+
+task conanInstall {
+    doLast {
+        def conanExecutable = "conan" // define the path to your conan installation
+        def rootDir = project.rootDir.parentFile
+        def ndkPath = android.ndkDirectory.absolutePath
+        def minSdk = android.defaultConfig.minSdkVersion.apiLevel
+        ["Debug", "Release"].each { String build_type ->
+            // ["armv7", "armv8", "x86", "x86_64"]
+            ["armv8", "x86_64"].each { String arch ->
+                def cmd = "${conanExecutable} install . --profile android -s build_type=${build_type} -s arch=${arch} " +
+                        "-s os.api_level=${minSdk} " +
+                        "-s compiler.cppstd=23 -s:b compiler.cppstd=23 --build missing " +
+                        "-c tools.cmake.cmake_layout:build_folder_vars=['settings.arch'] " +
+                        "-c tools.android:ndk_path=\"${ndkPath}\""
+                println ">> ${cmd}"
+
+                def sout = new StringBuilder(), serr = new StringBuilder()
+                def proc = cmd.execute(null, rootDir)
+                proc.consumeProcessOutput(sout, serr)
+                proc.waitFor()
+                if (proc.exitValue() != 0) {
+                    throw new Exception("out> $sout err> $serr" + "\nCommand: ${cmd}")
+                }
+                println "$sout"
+            }
+        }
+    }
+}
+
+android {
+    namespace = "com.erroratline0.cornel.infininotes"
+    compileSdk 36
+    ndkVersion = "29.0.14206865"
+    defaultConfig {
+        applicationId 'com.erroratline0.cornel.infininotes'
+        minSdkVersion 27
+        targetSdk 36
+        versionCode 2
+        versionName "0.6.0"
+        externalNativeBuild {
+            cmake {
+                cppFlags "-fexceptions", "-frtti", "-std=c++23"
+                arguments "-DANDROID_PLATFORM=android-${defaultConfig.minSdkVersion.apiLevel}", "-DANDROID_STL=c++_shared", "-DCMAKE_TOOLCHAIN_FILE=${project.rootDir.parentFile.absolutePath}/conan_android_toolchain.cmake".replace('\\', '/'), "-DGRAPHICS_BACKEND=OpenGLES3.0"
+                // abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+                abiFilters 'arm64-v8a', 'x86_64'
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            externalNativeBuild {
+                cmake {
+                    cppFlags "-fexceptions", "-frtti", "-std=c++23"
+                    arguments "-DCMAKE_BUILD_TYPE=Release"
+                }
+            }
+            signingConfig signingConfigs.debug
+        }
+        debug {
+            minifyEnabled false
+            shrinkResources false
+            debuggable true
+            externalNativeBuild {
+                cmake {
+                    cppFlags "-fexceptions", "-frtti", "-std=c++23"
+                    arguments "-DCMAKE_BUILD_TYPE=Debug"
+                }
+            }
+        }
+    }
+    applicationVariants.all { variant ->
+        def variantName = variant.name.capitalize()
+        tasks["merge${variantName}Assets"].dependsOn("externalNativeBuild${variantName}")
+
+        tasks.matching {
+            it.name == "externalNativeBuild${variantName}" ||
+            it.name == "generateJsonModel${variantName}"
+        }.all {
+            it.dependsOn conanInstall
+        }
+    }
+
+    sourceSets.main {
+        jniLibs.srcDir 'libs'
+        assets.srcDirs = ['../../assets']
+    }
+    externalNativeBuild {
+        cmake {
+            version "3.22.1"
+            path '../../CMakeLists.txt'
+        }
+    }
+
+    lint {
+        abortOnError = false
+    }
+    buildFeatures {
+        prefab true
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.core:core:1.18.0"
+}
